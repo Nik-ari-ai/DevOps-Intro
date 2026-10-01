@@ -9,7 +9,7 @@ QuickNotes has returned 4xx/5xx responses for more than 5% of all requests, sust
 1. Confirm it's real: open Grafana → "QuickNotes — Golden Signals" → **Errors** panel. Check the ratio is still above 5% and rising, not a single past spike.
 2. Find which codes: `curl -s localhost:8080/metrics | grep quicknotes_http_responses_by_code_total`. 5xx points at the app/server; a wall of 4xx points at bad client input or a broken deploy/route.
 3. Check the service is healthy and up: `docker compose ps` (is `quicknotes` healthy?) and `docker compose logs --tail=100 quicknotes` for panics or repeated handler errors.
-4. Check the dependency it needs: is the data volume writable / disk full? `docker compose exec ... df -h` (or host `df -h`); a full/again read-only `/data` turns writes into 5xx.
+4. Check the dependency it needs: is the data volume writable / is the disk full? The `quicknotes` container is distroless (no shell, no `df` inside it), so check from the host: `df -h` (host disk) and `docker system df -v` (look at the `quicknotes-data` volume). A full disk or a read-only `/data` turns writes into 5xx.
 
 ## Mitigations (stop the bleeding)
 1. **Roll back** to the last known-good image tag: `docker compose down && docker compose up -d` with the previous `quicknotes:` tag — fastest if a recent deploy caused it.
