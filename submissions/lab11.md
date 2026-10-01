@@ -55,6 +55,7 @@ internally consistent within its architecture.
           tag = "nix";
           created = "1970-01-01T00:00:01Z";   # pinned -> deterministic
           copyToRoot = [ quicknotes seed ];
+          extraCommands = ''mkdir -p tmp; chmod 1777 tmp'';  # writable /tmp for nonroot
           config = {
             Entrypoint = [ "/bin/quicknotes" ];
             ExposedPorts = { "8080/tcp" = { }; };
@@ -115,19 +116,26 @@ built entirely by Nix — no `docker build`. `created` is pinned so the tarball 
 ### Two independent builds — identical image digest
 
 ```
-ENV A  IMAGE_SHA256=1862115e1d9b5f4a5f14ae4f84f50f51dcfe9b839932735cd85a9a0b0a294262
-ENV B  IMAGE_SHA256=1862115e1d9b5f4a5f14ae4f84f50f51dcfe9b839932735cd85a9a0b0a294262
+ENV A  IMAGE_SHA256=25d87dc3384e3c599cd69bac5b443418aa14e8063a6c2d9d1ff803e43d8158a2
+ENV B  IMAGE_SHA256=25d87dc3384e3c599cd69bac5b443418aa14e8063a6c2d9d1ff803e43d8158a2
 RESULT: MATCH
 ```
 
-The tarball copied out of the container and re-hashed on the host is bit-identical:
+The tarball copied out of the container and re-hashed on the host is bit-identical, and the loaded image boots and serves as the nonroot user:
 
 ```
 $ shasum -a 256 quicknotes-nix.tar.gz
-1862115e1d9b5f4a5f14ae4f84f50f51dcfe9b839932735cd85a9a0b0a294262  quicknotes-nix.tar.gz
+25d87dc3384e3c599cd69bac5b443418aa14e8063a6c2d9d1ff803e43d8158a2  quicknotes-nix.tar.gz
 $ docker load -i quicknotes-nix.tar.gz
 Loaded image: quicknotes:nix
+$ docker run -d --rm -p 8099:8080 quicknotes:nix
+$ curl -s http://localhost:8099/health
+{"notes":4,"status":"ok"}
 ```
+
+The image creates a world-writable `/tmp` (via `extraCommands`), so the nonroot
+process (UID 65532) can write `DATA_PATH=/tmp/notes.json` on start — without it the
+image loads but the process exits with `mkdir /tmp: permission denied`.
 
 ### 2.3 Comparison with Lab 6's Dockerfile build
 
@@ -145,7 +153,7 @@ every build.
 
 | Image | Build | Digest stable across builds? | Size |
 |---|---|---|---|
-| `quicknotes:nix` | `nix build .#docker` | **Yes** — `1862115e…294262` | **20.7MB** |
+| `quicknotes:nix` | `nix build .#docker` | **Yes** — `25d87dc3…8158a2` | **20.7MB** |
 | `qn-lab6` | `docker build --no-cache` | **No** — `bab72c…` ≠ `13e16a…` | 21.9MB |
 
 The Nix image is also slightly smaller (no distroless CA bundle / passwd layer — just the static binary + seed).
