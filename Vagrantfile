@@ -9,8 +9,9 @@
 GO_VERSION = "1.24.5"
 
 Vagrant.configure("2") do |config|
-  # 1. Box — public Ubuntu 24.04 LTS
+  # 1. Box — public Ubuntu 24.04 LTS, with the version pinned for reproducibility
   config.vm.box = "bento/ubuntu-24.04"
+  config.vm.box_version = "202510.26.0"
 
   # 2. Hostname identifies the service
   config.vm.hostname = "quicknotes-vm"
@@ -45,6 +46,6 @@ Vagrant.configure("2") do |config|
     /usr/local/go/bin/go version
   SHELL
 
-  # 7. Reproducible: pinned box + pinned Go version above mean any clean
-  #    clone produces the same working state.
+  # 7. Reproducible: pinned box name + box version + pinned Go version mean any
+  #    clean clone on an x86_64 host produces the same working state.
 end

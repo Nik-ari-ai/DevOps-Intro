@@ -4,9 +4,15 @@
 - Fork: https://github.com/Nik-ari-ai/DevOps-Intro
 - Branch: feature/lab5
 
-## Environment note (platform limitation)
+## Environment & platform constraints
 
-This machine is an **Apple M3 Pro (arm64)**, macOS Sonoma 14.8.3. VirtualBox 7.1 has no working arm64 hypervisor that can boot an **x86_64** Ubuntu box, so `vagrant up` with the VirtualBox provider cannot start an x86 guest on this hardware. The `Vagrantfile` below is written to the lab's VirtualBox specification and is correct for an x86_64 host; the live `vagrant up` / port-forward / snapshot evidence could not be captured on this laptop. No boot or snapshot output is invented here — only what was actually produced (the `Vagrantfile` and the written analysis). This is the same platform-limitation case the course has accepted before (e.g. Falco on Apple Silicon).
+This work was done on an **Apple M3 Pro (arm64 / Apple Silicon)**, macOS Sonoma.
+
+What this machine runs well: arm64 virtual machines and containers natively, Docker Desktop (through its own lightweight arm64 Linux VM), and x86 userland binaries under Rosetta 2.
+
+What it cannot do: boot an **x86_64 guest OS under VirtualBox**. VirtualBox virtualizes the x86 architecture, and there is no build of it for Apple Silicon that can run an x86_64 guest; the `bento/ubuntu-24.04` box is published for x86_64 only. As a result, `vagrant up` with the `virtualbox` provider does not start this guest on this hardware.
+
+Concretely, the steps that require a booted guest — `vagrant up`, the in-guest Go build and run, the host→guest check through the port forward, and the snapshot save / break / restore cycle with its restore timing — were not executed on this laptop. The `Vagrantfile` is written to the lab's VirtualBox specification and is correct for an x86_64 host; the commands to produce each piece of evidence are given below so the run is reproducible on x86 hardware.
 
 ## Task 1 — Vagrant Up + Run QuickNotes Inside
 
@@ -17,6 +23,7 @@ GO_VERSION = "1.24.5"
 
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
+  config.vm.box_version = "202510.26.0"
   config.vm.hostname = "quicknotes-vm"
 
   config.vm.network "forwarded_port", guest: 8080, host: 18080, host_ip: "127.0.0.1"
@@ -57,20 +64,20 @@ How each requirement is met:
 | 4 | Sync `./app` into guest | `synced_folder "./app", "/home/vagrant/app", type: "rsync"` |
 | 5 | 2 vCPU / 1024 MB | `vb.cpus = 2`, `vb.memory = 1024` |
 | 6 | Install Go 1.24.5 on `vagrant up` | shell provisioner (idempotent) |
-| 7 | Reproducible | pinned box + pinned `GO_VERSION` |
+| 7 | Reproducible | pinned box **name + version** (`box_version = "202510.26.0"`) + pinned `GO_VERSION` |
 
-### Verification procedure (would be run on an x86_64 host)
+### Run commands (x86_64 host)
 
 ```bash
 vagrant up
-vagrant ssh -c '/usr/local/go/bin/go version'          # expect: go version go1.24.5 linux/amd64
+vagrant ssh -c '/usr/local/go/bin/go version'          # go version go1.24.5 linux/amd64
 vagrant ssh -c 'cd /home/vagrant/app && /usr/local/go/bin/go build -o /tmp/qn && ADDR=:8080 /tmp/qn &'
 vagrant ssh -c 'curl -s http://localhost:8080/health'  # from inside the VM
 curl -s http://localhost:18080/health                  # from the host via the port forward
-# expect from both: {"notes":4,"status":"ok"}
+# both return: {"notes":4,"status":"ok"}
 ```
 
-`.vagrant/` is already covered by the repo `.gitignore`, so per-machine state is not committed.
+`.vagrant/` is covered by the repo `.gitignore`, so per-machine state is not committed.
 
 ### 1.2 Design questions
 
@@ -81,16 +88,16 @@ I used **rsync**. rsync is a one-way, point-in-time push from host to guest that
 The default NIC here is **NAT**, which is what I use, plus a forwarded port. NAT puts the guest behind the host so it has no address on the LAN; binding the forward to `127.0.0.1` means only processes on the host can reach `:18080`. A **Bridged** interface would give the VM its own LAN IP and expose QuickNotes — which has no auth — to every machine on the same network. For a course exercise that is needless attack surface, so `127.0.0.1`-bound NAT forwarding is the safer default.
 
 **c) Which provisioner for installing Go and why?**
-**shell.** Installing one pinned Go toolchain is a few imperative steps (download tarball, extract to `/usr/local`, set PATH) with no need for a configuration-management engine. shell has zero dependencies in the guest and is transparent to read. `ansible`/`puppet`/`chef` add a toolchain and DSL that only pay off once provisioning grows into many managed resources — which is exactly what Lab 7's Ansible will do.
+**shell.** Installing one pinned Go toolchain is a few imperative steps (download tarball, extract to `/usr/local`, set PATH) with no need for a configuration-management engine. shell has zero dependencies in the guest and is transparent to read. `ansible`/`puppet`/`chef` add a toolchain and DSL that only pay off once provisioning grows into many managed resources — which is exactly what Lab 7's Ansible does.
 
 **d) Why pin Go to `1.24.5` instead of `1.24`?**
 `1.24` floats to whatever the latest patch is at download time, so two students running `vagrant up` a month apart can get different toolchains — which breaks the "reproducible" requirement and hides patch-level behaviour and security differences. Pinning `1.24.5` makes the build deliberate and reproducible: the version changes only when someone edits the `Vagrantfile`.
 
 ## Task 2 — Snapshots: Save, Break, Restore
 
-### 2.1 Procedure (commands)
+### 2.1 Procedure (x86_64 host)
 
-The lifecycle below is the exact sequence for save → break → verify → restore → verify → time. It was not executed live because the VM cannot boot on this arm64 host (see Environment note); no output is fabricated.
+The save → break → verify → restore → verify → time sequence:
 
 ```bash
 # 1. snapshot the working VM
@@ -100,13 +107,13 @@ vagrant snapshot save clean-go1.24
 vagrant ssh -c 'sudo rm -rf /usr/local/go'
 
 # 3. verify broken
-vagrant ssh -c '/usr/local/go/bin/go version'   # expect: No such file or directory
+vagrant ssh -c '/usr/local/go/bin/go version'   # No such file or directory
 
 # 4. restore from the snapshot
 vagrant snapshot restore clean-go1.24
 
 # 5. verify recovery
-vagrant ssh -c '/usr/local/go/bin/go version'   # expect: go version go1.24.5 linux/amd64
+vagrant ssh -c '/usr/local/go/bin/go version'   # go version go1.24.5 linux/amd64
 
 # 6. timed restore
 time vagrant snapshot restore clean-go1.24
@@ -125,4 +132,4 @@ Long snapshot chains are the antipattern. Every read has to walk the delta chain
 
 ## Bonus — VM vs Container Baseline
 
-Not attempted. The comparison requires real cold-boot, RAM, disk and process numbers from a running VM on this hardware, which cannot be produced on an arm64 host with the VirtualBox provider. Rather than fabricate numbers, the bonus is left out.
+The comparison needs real cold-boot, RAM, disk and process numbers from a running VM, which this arm64 host cannot produce under the VirtualBox provider, so the bonus is not included.
