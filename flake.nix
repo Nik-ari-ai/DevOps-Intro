@@ -46,6 +46,13 @@
           tag = "nix";
           created = "1970-01-01T00:00:01Z";
           copyToRoot = [ quicknotes seed ];
+          # Give the nonroot user a writable /tmp (DATA_PATH lives there).
+          # Without this the image loads but the process cannot create
+          # /tmp/notes.json and exits on startup.
+          extraCommands = ''
+            mkdir -p tmp
+            chmod 1777 tmp
+          '';
           config = {
             Entrypoint = [ "/bin/quicknotes" ];
             ExposedPorts = { "8080/tcp" = { }; };
