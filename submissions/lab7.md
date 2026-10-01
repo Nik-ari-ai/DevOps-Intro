@@ -4,9 +4,9 @@
 - Fork: https://github.com/Nik-ari-ai/DevOps-Intro
 - Branch: feature/lab7
 
-## Environment note (platform cascade from Lab 5)
+## Environment & platform constraints
 
-Task 1/2 deploy against the **Lab 5 VirtualBox VM**, which cannot boot on this Apple M3 Pro (arm64) host — VirtualBox has no arm64 hypervisor for x86 boxes. So the live `ansible-playbook` run against the VM, the `curl :18080` checks and the runtime PLAY RECAPs could not be produced on this hardware, and no such output is fabricated. Instead the artifacts are **validated for real**: `ansible-playbook --syntax-check` passes, `ansible-lint` passes at the **production** profile with 0 findings, and the systemd template renders to a valid unit. The playbook, inventory, templates and the bonus `ansible-pull` units are all present in `ansible/` — for the bonus these files are the graded core.
+Task 1/2 deploy against the Lab 5 VirtualBox VM, which does not boot on this Apple M3 Pro (arm64) host — VirtualBox has no Apple-Silicon build that virtualizes an x86_64 guest. So the live `ansible-playbook` run against the VM, the `curl :18080` checks, and the runtime PLAY RECAPs were not produced on this laptop; a live deploy needs a Linux target (the x86 VM, or any Linux host with systemd). What was validated here: `ansible-playbook --syntax-check` passes, and `ansible-lint` passes at the **production** profile with 0 findings. The playbook, inventories, templates and the `ansible-pull` units are in `ansible/`.
 
 ## Task 1 — Idempotent Deploy
 
@@ -110,7 +110,7 @@ RestartSec=2
 WantedBy=multi-user.target
 ```
 
-### Validation (in place of the live run)
+### Validation
 
 ```
 $ ansible-playbook --syntax-check -i ansible/inventory.ini ansible/playbook.yaml
@@ -121,7 +121,7 @@ Passed: 0 failure(s), 0 warning(s) on 2 files.
 Last profile that met the validation criteria was 'production'.
 ```
 
-The binary shipped is the static `CGO_ENABLED=0` amd64 build (matches the x86_64 Ubuntu VM). When run on an x86 host, `curl :18080/health` returns `{"notes":4,"status":"ok"}` and `/notes` returns the 4 seeded notes because `seed.json` is copied to `SEED_PATH=/var/lib/quicknotes/seed.json`.
+The binary shipped is the static `CGO_ENABLED=0` amd64 build (matches the x86_64 Ubuntu VM). On a Linux host, `seed.json` is copied to `SEED_PATH=/var/lib/quicknotes/seed.json`, so `/health` returns `{"notes":4,"status":"ok"}` and `/notes` returns the 4 seeded notes.
 
 ### 1.5 Design questions
 
@@ -139,9 +139,9 @@ Not needed here — the playbook uses none of the `ansible_*` facts; every value
 
 ## Task 2 — Idempotency + Selective Re-run
 
-Because the live target can't boot here, the runtime RECAPs (`changed=0`, template-only `changed=1` + handler) can't be captured; the design answers below explain the exact mechanism, and the artifacts are lint/​syntax validated.
+The live target does not boot on this host, so the runtime RECAPs are described below rather than captured; the files are syntax- and lint-validated.
 
-**Expected behaviour** (what the graded run shows on an x86 host):
+**Expected behaviour on a Linux host:**
 - 1st run: user/dir/binary/seed/template/enable all `changed`, handler `Restart quicknotes` fires once.
 - 2nd run, no changes: `changed=0` — every module finds the desired state already present.
 - Change `listen_addr` → only the `template` task is `changed=1`, the handler fires, everything else `ok`.
@@ -160,14 +160,16 @@ Failure modes: it is not idempotent (reports `changed` every run, so the handler
 
 ## Bonus — `ansible-pull` GitOps Loop
 
-Live convergence (push → VM reconciles in ≤5 min) can't be demonstrated without the bootable VM, but the graded core — the unit files, the local inventory, and the automation that installs them — is included in `ansible/`.
+Live convergence (push → node reconciles within the timer window) needs the bootable Linux VM. The unit files, the local inventory and the setup playbook are in `ansible/`.
 
 ### `ansible/inventory-local.ini`
 
 ```ini
-[local]
+[quicknotes]
 127.0.0.1 ansible_connection=local
 ```
+
+The local host is placed in the **`quicknotes`** group (not a separate `local` group) so that `ansible-pull` — which runs `playbook.yaml` with `hosts: quicknotes` directly on the node — matches the machine it runs on. `ansible_connection=local` makes it apply to the node itself, with no SSH.
 
 ### `ansible/templates/ansible-pull.service.j2`
 
@@ -201,7 +203,7 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-### `ansible/pull-setup.yaml` (installs the loop on the VM)
+### `ansible/pull-setup.yaml` (installs the loop on the node)
 
 Installs `ansible` + `git`, renders the service and timer from the templates above, then enables and starts `ansible-pull.timer` (`daemon_reload: true`). `repo_url`/`repo_branch` are variables (`https://github.com/Nik-ari-ai/DevOps-Intro.git`, `feature/lab7`).
 
